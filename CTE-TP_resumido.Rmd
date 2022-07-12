@@ -1,0 +1,1525 @@
+---
+title: "Trabajo Practico Modelos Relacionales"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```
+Presentado por: Ayelen Opazo y Catherine Cruz
+```
+
+
+
+```{r}
+library(RMySQL)
+library(DBI)
+library(dplyr)
+library(RSQLite)
+library(odbc)
+#*library(RevoScaleR)¨*
+
+sort(unique(odbcListDrivers()[[1]]))
+```
+
+```{r}
+sqldb=dbConnect(odbc(), 
+                Driver="SQL Server",
+                Server="157.92.26.17,1443;",
+                Database="AdventureWorks2019",
+                uid="Alumno", 
+                pwd="mrcd2022")
+```
+
+
+```
+Subtitle: "Exploración de la base y el negocio"
+```
+
+
+```{r}
+
+Oficinas_de_venta=dbGetQuery(sqldb, 
+"SELECT [Group] as Zona
+FROM Sales.SalesTerritory;")
+
+barplot(prop.table(table(Oficinas_de_venta$Zona)),col=c(colors()[616]), main="Ventas por zona - General")
+```
+
+
+```
+Categorías de productos
+```
+
+
+```{r}
+Categorías_de_productos=dbGetQuery(sqldb, 
+"SELECT Name
+FROM Production.ProductCategory")
+Categorías_de_productos
+
+
+```
+
+
+```
+Subcategorias de productos
+```
+
+
+```{r}
+
+ProductSubcategory=dbGetQuery(sqldb, 
+"SELECT pc.Name as Category, ps.Name as Subcategory
+FROM Production.ProductCategory pc
+left join Production.ProductSubcategory ps on ps.ProductCategoryID=pc.ProductCategoryID")
+ProductSubcategory
+
+```
+
+
+
+```
+Productos más vendidos y sus categorías / subcategorías
+```
+
+```{r}
+Productosmasvendidos=dbGetQuery(sqldb, 
+"SELECT p.Name AS Nombre_producto, s.Name AS Subcategoria, c.Name AS Categoria, COUNT(*) Cantidad_vendida_historica
+FROM Sales.SalesOrderDetail d INNER JOIN Production.Product p ON d.ProductID=p.ProductID
+INNER JOIN Production.ProductSubcategory s ON p.ProductSubcategoryID=s.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON s.ProductCategoryID=c.ProductCategoryID
+GROUP BY d.ProductID, p.Name, s.Name, c.Name
+having COUNT(*) >= '2000'
+ORDER BY Cantidad_vendida_historica DESC;")
+Productosmasvendidos
+
+```
+
+
+
+
+
+```{r}
+Productosvendidostotal=dbGetQuery(sqldb, 
+"SELECT d.SalesOrderID, p.Name AS Nombre_producto, s.Name AS Subcategoria, c.Name AS Categoria
+FROM Sales.SalesOrderDetail d INNER JOIN Production.Product p ON d.ProductID=p.ProductID
+INNER JOIN Production.ProductSubcategory s ON p.ProductSubcategoryID=s.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON s.ProductCategoryID=c.ProductCategoryID")
+
+
+barplot(prop.table(table(Productosvendidostotal$Categoria)),col=colors()[616], main = "Ventas por categoria de producto")
+
+```
+
+
+```
+Subcategorias mas vendidas  (Road Bikes)
+```
+
+
+
+```{r}
+
+Cantidad_de_ventas_agrupada=dbGetQuery(sqldb, 
+"SELECT c.Name AS Nombre_categoria, s.Name AS Nombre_subcategoria,  COUNT(*) Cantidad_vendida
+FROM Sales.SalesOrderDetail d INNER JOIN Production.Product p ON d.ProductID=p.ProductID
+INNER JOIN Production.ProductSubcategory s ON p.ProductSubcategoryID=s.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON s.ProductCategoryID=c.ProductCategoryID
+GROUP BY s.Name ,c.Name 
+ORDER BY Cantidad_vendida DESC;")
+Cantidad_de_ventas_agrupada
+
+```
+
+
+```{r}
+library(ggplot2)
+plt2 <- ggplot(Cantidad_de_ventas_agrupada) +
+        geom_col(aes(Cantidad_de_ventas_agrupada$Cantidad_vendida,sort(Cantidad_de_ventas_agrupada$Nombre_subcategoria, 
+        decreasing =    TRUE)), fill=colors()[616],  width = 0.5, decreasing = TRUE, col=colors()[616])+
+        theme(panel.background = element_rect(fill = "white")) +
+        labs(title = "Ventas por subcategoria de producto", x ="Cantidad vendida", y = "Subcategoria")
+
+plt2
+
+```
+
+
+```
+Total ordenes
+```
+
+```{r}
+total_ordenes=dbGetQuery(sqldb, "SELECT COUNT(*) Cantidad_ordenes_total
+FROM Sales.SalesOrderHeader;")
+total_ordenes
+```
+
+
+```{r}
+total_resellers=dbGetQuery(sqldb, "with Total as (SELECT DISTINCT(SalesPersonID)
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NOT NULL)
+select count(*) as Total_resellers from Total;")
+total_resellers
+
+```
+
+
+
+```{r}
+total_ordenes_resellers=dbGetQuery(sqldb, "SELECT COUNT(*) Cantidad_ordenes_resellers
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NOT NULL;")
+total_ordenes_resellers
+
+```
+
+
+```{r}
+library(ggplot2)
+total_ordenes_x_vendedor=dbGetQuery(sqldb, "SELECT SalesPersonID, count(SalesOrderID) as q_ordenes
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NOT NULL
+group by SalesPersonID
+order by q_ordenes desc")
+total_ordenes_x_vendedor$SalesPersonID = as.factor(total_ordenes_x_vendedor$SalesPersonID)
+
+plt <- ggplot(total_ordenes_x_vendedor) +
+        geom_col(aes(total_ordenes_x_vendedor$q_ordenes,sort(total_ordenes_x_vendedor$SalesPersonID, 
+        decreasing =    TRUE)), fill=colors()[616],  width = 0.5, decreasing = TRUE, col=colors()[616])+
+        theme(panel.background = element_rect(fill = "white")) +
+        labs(title = "Total de ordenes por vendedor General", x ="Cantidad de ordenes", y = "VendedorID")
+
+plt
+
+```
+
+
+
+
+```{r}
+Cantidad_ordenes_tipo_compra=dbGetQuery(sqldb, "SELECT 'fisica' AS tipo_compra, COUNT(*) Cantidad_ordenes,
+FORMAT(SUM(TotalDue),'C') Monto_total
+FROM Sales.SalesOrderHeader
+WHERE OnlineOrderFlag = 0
+GROUP BY OnlineOrderFlag
+UNION 
+SELECT 'online' AS tipo_compra, COUNT(*) Cantidad_ordenes, FORMAT(SUM(TotalDue),'C') Monto_tota
+FROM Sales.SalesOrderHeader
+WHERE OnlineOrderFlag = 1
+GROUP BY OnlineOrderFlag
+ORDER BY 2 DESC;")
+Cantidad_ordenes_tipo_compra
+
+```
+
+```{r}
+
+Canales_de_venta=dbGetQuery(sqldb, 
+"SELECT OnlineOrderFlag
+FROM Sales.SalesOrderHeader;")
+
+pie(table(Canales_de_venta), values = "%",labels=c("Ventas reseller","Ventas Online"), col=c('White',colors()[616]), main="Cantidad de ordenes por tipo de venta")
+
+```
+
+
+```
+EDA LineTotal en cantidades
+```
+
+
+```{r}
+EDA_LineTotal=dbGetQuery(sqldb, 
+"SELECT 'resellers' as Tipo_compra, count(LineTotal) as cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal) as rango,
+avg(LineTotal) as media,
+stdev(LineTotal) as desviacion_estandar,
+exp(avg(log(LineTotal))) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+WHERE OnlineOrderFlag = 0
+UNION
+SELECT 'ventas_online' as Tipo_compra, count(LineTotal) as cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal) as rango,
+avg(LineTotal) as media,
+stdev(LineTotal) as desviacion_estandar,
+exp(avg(log(LineTotal))) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+WHERE OnlineOrderFlag = 1;")
+EDA_LineTotal
+
+
+```
+
+
+
+```{r}
+#install.packages("ggthemes")
+library(tidyverse) # tiene ggplot, dplyr, tidyr, y otros
+library(ggthemes)  # estilos de gráficos
+library(ggrepel)   # etiquetas de texto más prolijas que las de ggplot
+library(scales)
+
+EDA_LineTotal_base=dbGetQuery(sqldb, 
+"SELECT OnlineOrderFlag as Tipo_compra, LineTotal as cantidad, h.SalesOrderID
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+order by Tipo_compra;")
+
+ggplot(EDA_LineTotal_base, aes(
+  x = cantidad,
+  group = Tipo_compra,
+  fill = Tipo_compra)) +
+  geom_density(alpha=0.7,adjust =2)+
+  labs(x="Distribución dela cantidad", y="",
+       title=" LineTotal según tipo de compra")+
+  scale_x_continuous(limits = c(0,50000))+
+  scale_fill_gdocs()+
+  theme(legend.position = "bottom",
+        plot.title      = element_text(size=12))+
+  facet_wrap(~ Tipo_compra, scales = "free")
+
+```
+
+```
+¿las cantidades son significativamente diferentes en promedio para las compras online vs. resellers?
+```
+
+```{r}
+#install.packages("nortest")
+library(nortest)
+ks.test(EDA_LineTotal_base$cantidad, pnorm)
+```
+
+
+```{r}
+library(dplyr)
+wilcox.test(as.numeric(EDA_LineTotal_base[c(1:60919),2]), as.numeric(EDA_LineTotal_base[c(60920:121317),2]), var.equal=TRUE)
+
+```
+
+
+```
+Las cantidades promedio de las compras online son significativamente diferentes al promedio de las compras por reseller. El promedio de cantdades compradas por reseller es mayor. 
+
+```
+
+
+
+```
+EDA TotalDue
+```
+
+
+```{r}
+EDA_TotalDue=dbGetQuery(sqldb, 
+"SELECT 'resellers' as Tipo_compra, count(TotalDue) as cantidad, sum(TotalDue) as Monto,
+count(distinct TotalDue) as cardinalidad,
+max(TotalDue) - min(TotalDue) as rango,
+avg(TotalDue) as media,
+stdev(TotalDue) as desviacion_estandard,
+exp(avg(log(TotalDue))) as media_geometrica,
+count(TotalDue) / Sum(1/TotalDue) as media_armonica
+FROM Sales.SalesOrderHeader 
+WHERE OnlineOrderFlag = 0
+UNION
+SELECT 'ventas_online' as Tipo_compra, count(TotalDue) as cantidad, sum(TotalDue) as Monto,
+count(distinct TotalDue) as cardinalidad,
+max(TotalDue) - min(TotalDue) as rango,
+avg(TotalDue) as media,
+stdev(TotalDue) as desviacion_estandard,
+exp(avg(log(TotalDue))) as media_geometrica,
+count(TotalDue) / Sum(1/TotalDue) as media_armonica
+FROM Sales.SalesOrderHeader
+WHERE OnlineOrderFlag = 1;")
+EDA_TotalDue
+                     
+```
+
+
+
+
+
+```{r}
+#install.packages("ggthemes")
+library(tidyverse) # tiene ggplot, dplyr, tidyr, y otros
+library(ggthemes)  # estilos de gráficos
+library(ggrepel)   # etiquetas de texto más prolijas que las de ggplot
+library(scales)
+
+EDA_TotalDue_base=dbGetQuery(sqldb, 
+"SELECT [OnlineOrderFlag] as Tipo_compra, TotalDue as Monto, SalesOrderID
+FROM Sales.SalesOrderHeader
+ORDER BY Tipo_compra ;")
+
+
+ggplot(EDA_TotalDue_base, aes(
+  x = Monto,
+  group = Tipo_compra,
+  fill = Tipo_compra)) +
+  geom_density(alpha=0.7,adjust =2)+
+  labs(x="Distribución del Monto", y="",
+       title=" Monto total según tipo tipo de compra")+
+  scale_x_continuous(limits = c(0,50000))+
+  scale_fill_gdocs()+
+  theme(legend.position = "bottom",
+        plot.title      = element_text(size=12))+
+  facet_wrap(~ Tipo_compra, scales = "free")
+
+```
+
+```
+¿los montos son significativamente diferentes en promedio para las compras online vs. resellers?
+
+```
+
+```{r}
+#install.packages("nortest")
+library(nortest)
+ks.test(EDA_TotalDue_base$Monto, pnorm)
+```
+
+```
+El monto no se distribuye normal, se utiliza test no parametrico
+```
+
+
+```{r}
+library(dplyr)
+wilcox.test(as.numeric(EDA_TotalDue_base[c(1:3806),2]), as.numeric(EDA_TotalDue_base[c(3807:31465),2]), var.equal=TRUE)
+```
+
+```
+El monto promedio de las compras online es significativamente diferente al promedio de las compras por reseller. El promedio de compras por reseller es mayor. 
+
+```
+
+
+```
+Cantidad y montos de compras (online/fisica) por zonas
+```
+
+
+```{r}
+Cantidad_montos_por_compras_zonas=dbGetQuery(sqldb, 
+"SELECT t.Name as Lugar, t.[Group] as Zona, 'resellers' as Tipo_compra, count(LineTotal) as cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal)  as rango,
+avg(LineTotal) as media,
+round(stdev(LineTotal), 2) as desviacion_estandard,
+round(exp(avg(log(LineTotal))),2) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID 
+WHERE OnlineOrderFlag = 0
+GROUP BY t.Name, t.[Group] 
+UNION
+SELECT t.Name as Lugar, t.[Group]  as Zona, 'ventas_online' as Tipo_compra, count(LineTotal) as cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal) as rango,
+avg(LineTotal) as media,
+round(stdev(LineTotal), 2) as desviacion_estandard,
+round(exp(avg(log(LineTotal))),2) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID 
+WHERE OnlineOrderFlag = 1
+GROUP BY t.Name, t.[Group] 
+ORDER BY 1, 2, 3;")
+Cantidad_montos_por_compras_zonas
+
+
+```
+
+
+
+```{r}
+
+Cantidad_montos_por_compras_Zona=dbGetQuery(sqldb, 
+"SELECT t.[Group]  as Zona, 'resellers' as Tipo_compra, count(h.SalesOrderID) as cantidad_ventas,
+FORMAT(sum(h.TotalDue), 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 0
+GROUP BY t.[Group]
+UNION
+SELECT t.[Group]  as Zona, 'ventas_online' as Tipo_compra,  count(h.SalesOrderID) as cantidad_ventas,
+FORMAT(sum(h.TotalDue), 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 1
+GROUP BY t.[Group] 
+ORDER BY Tipo_compra asc,monto_total desc;")
+Cantidad_montos_por_compras_Zona
+
+```
+
+```
+Cantidad ventas online por Zona
+```
+```{r}
+
+cantidad_ventas_online=dbGetQuery(sqldb, 
+"SELECT t.[Group]  as Zona,  count(h.SalesOrderID) as cantidad_ventas,
+FORMAT(sum(h.TotalDue), 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 1
+GROUP BY t.[Group] 
+ORDER BY 3 DESC;")
+cantidad_ventas_online
+
+```
+
+```{r}
+
+Cantidad_ventas_online_z=dbGetQuery(sqldb, 
+"SELECT t.[Group]  as Zona,  h.SalesOrderID as Factura,
+FORMAT(h.TotalDue, 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 1
+ORDER BY 3 DESC;")
+
+barplot(prop.table(table(Cantidad_ventas_online_z$Zona)),col=c(colors()[616]), main="Cantidad ventas por zona - Online", values="%")
+```
+
+
+
+```{r}
+
+cantidad_ventas_resellers=dbGetQuery(sqldb, 
+"SELECT t.[Group]  as Zona,  count(h.SalesOrderID) as cantidad_ventas,
+FORMAT(sum(h.TotalDue), 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 0
+GROUP BY t.[Group] 
+ORDER BY 3 DESC;")
+cantidad_ventas_resellers
+
+```
+
+```{r}
+
+Cantidad_ventas_resellers_z=dbGetQuery(sqldb, 
+"SELECT t.[Group]  as Zona,  h.SalesOrderID as Factura,
+FORMAT(h.TotalDue, 'C') as monto_total
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+WHERE OnlineOrderFlag = 0
+ORDER BY 3 DESC;")
+
+barplot(prop.table(table(Cantidad_ventas_resellers_z$Zona)),col=c(colors()[616]), main="Cantidad ventas por zona - Resellers")
+
+```
+
+
+```{r}
+
+descriptivos_ventas=dbGetQuery(sqldb, 
+"SELECT t.[Group] as Zona, 'venta_fisica' as Tipo_compra, count(LineTotal) as Cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal)  as rango,
+avg(LineTotal) as media,
+round(stdev(LineTotal), 2) as desviacion_estandard,
+round(exp(avg(log(LineTotal))),2) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID 
+WHERE OnlineOrderFlag = 0
+GROUP BY t.[Group] 
+UNION
+SELECT t.[Group]  as Zona, 'ventas_online' as Tipo_compra, count(LineTotal) as Cantidad,
+count(distinct LineTotal) as cardinalidad,
+max(LineTotal) - min(LineTotal) as rango,
+avg(LineTotal) as media,
+round(stdev(LineTotal), 2) as desviacion_estandard,
+round(exp(avg(log(LineTotal))),2) as media_geometrica,
+count(LineTotal) / Sum(1/LineTotal) as media_armonica
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID 
+WHERE OnlineOrderFlag = 1
+GROUP BY t.[Group]")
+descriptivos_ventas
+
+```
+
+
+```{r}
+
+descriptivos_ventas_G=dbGetQuery(sqldb, 
+"SELECT h.SalesOrderID,t.[Group] as Zona, OnlineOrderFlag as Tipo_compra, LineTotal as Cantidad
+FROM Sales.SalesTerritory t INNER JOIN Sales.SalesOrderHeader h ON t.TerritoryID=h.TerritoryID
+INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID")
+descriptivos_ventas_G
+```
+
+
+```{r}
+g = ggplot(descriptivos_ventas_G, aes(Zona, fill=Tipo_compra) ) +
+  labs(title = "Compras por zona y tipo de compra")+ylab("") +
+  theme(plot.title = element_text(size = rel(1), colour = "black") )+
+theme(panel.background = element_rect(fill = "white"))
+g+geom_bar(position="dodge") + scale_fill_manual(values = alpha(c(colors()[616], colors()[615]), 1)) +
+  theme(axis.title.x = element_text(face="bold", size=3))
+
+```
+
+
+
+```
+Características Resellers que mas ventas tienen
+
+```
+
+```{r}
+Total_vendedores=dbGetQuery(sqldb, 
+"SELECT *
+FROM HumanResources.vEmployeeDepartmentHistory 
+WHERE Department = 'Sales' and EndDate is null;")
+Total_vendedores
+
+```
+
+```{r}
+
+Datos_vendedores2=dbGetQuery(sqldb,
+"SELECT *
+FROM HumanResources.vEmployee
+WHERE BusinessEntityID IN (SELECT BusinessEntityID
+                            FROM HumanResources.vEmployeeDepartmentHistory 
+                            WHERE Department = 'Sales')")
+Datos_vendedores2
+Datos_vendedores2$Lugar=Datos_vendedores2$CountryRegionName
+
+```
+
+
+```
+Ubicacion Vendedores por Region
+```
+
+
+```{r}
+library(lessR)
+PieChart(Lugar, hole = 0, values = "%", data = Datos_vendedores2)
+
+```
+
+
+
+```{r}
+library(lessR)
+PieChart(CountryRegionName, hole = 0, values = "%", data = Datos_vendedores2)
+
+```
+
+
+
+```{r}
+library(lessR)
+PieChart(StateProvinceName, hole = 0, values = "%", data = Datos_vendedores2)
+
+```
+
+```
+Nivel organizacional y rol:
+```
+
+```{r}
+
+Nivel_organizacional=dbGetQuery(sqldb,
+"SELECT DISTINCT OrganizationLevel, JobTitle
+FROM HumanResources.Employee
+WHERE BusinessEntityID IN (SELECT BusinessEntityID
+                            FROM HumanResources.vEmployeeDepartmentHistory 
+                            WHERE Department = 'Sales');")
+
+Nivel_organizacional
+```
+
+```
+Todos los vendedores que venden, todas las ventas online no presentan vendendor, solo las fisicas.
+```
+
+```{r}
+Vendedor_que_vendieron=dbGetQuery(sqldb,
+"SELECT DISTINCT(SalesPersonID) 
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NOT NULL;")
+Vendedor_que_vendieron
+
+```
+
+
+
+```
+Dentro de los vendedores se encuentran 3 managers 3 North American Sales Manager, European Sales Manager, Pacific Sales Manage y tienen ventas
+
+```
+
+
+```{r}
+
+Suma_rol=dbGetQuery(sqldb, 
+"SELECT OrganizationLevel, JobTitle, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+GROUP BY OrganizationLevel, JobTitle
+ORDER BY Cantidad_ordenes DESC;")
+Suma_rol
+
+```
+
+
+
+
+```{r}
+
+library(lessR)
+Suma_rol2=dbGetQuery(sqldb, 
+"SELECT JobTitle
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL")
+
+PieChart(JobTitle, hole = 0, values = "%", data = Suma_rol2, legend = c("Sales Representative","North American Sales Manager", "European Sales Manager", "Pacific Sales Manager"), fill =  c("pink","blue","aquamarine1",colors()[616]))
+
+```
+
+
+```
+TOP 10 mayor cantidad de ventas por reseller, año y mes
+```
+
+```{r}
+
+Top_10=dbGetQuery(sqldb, 
+"SELECT TOP 10 SalesPersonID,  OrganizationLevel, JobTitle, YEAR(OrderDate) Año, MONTH(OrderDate) Mes, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+GROUP BY SalesPersonID,  OrganizationLevel, JobTitle, YEAR(OrderDate), MONTH(OrderDate) 
+ORDER BY Cantidad_ordenes DESC;")
+Top_10
+
+```
+
+
+```
+Cantidad de ventas por Managers, año y mes
+```
+
+```{r}
+Ventas_manager_anual=dbGetQuery(sqldb, 
+"SELECT SalesPersonID,  OrganizationLevel, JobTitle, YEAR(OrderDate) Año, MONTH(OrderDate) Mes, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+AND JobTitle != 'Sales Representative'
+GROUP BY SalesPersonID,  OrganizationLevel, JobTitle, YEAR(OrderDate), MONTH(OrderDate) 
+ORDER BY Cantidad_ordenes DESC;")
+Ventas_manager_anual
+
+```
+
+
+
+```
+Ventas North American Sales
+```
+
+```{r}
+Ventas_North_Sales_Manager=dbGetQuery(sqldb, 
+"SELECT YEAR(OrderDate) AS Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+AND JobTitle = 'North American Sales Manager'
+GROUP BY YEAR(OrderDate)
+ORDER BY Año; ")
+Ventas_North_Sales_Manager
+
+```
+
+```
+Ventas European Sales Manager
+```
+
+```{r}
+
+Ventas_European_Sales=dbGetQuery(sqldb,
+"SELECT YEAR(OrderDate) AS Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+AND JobTitle = 'European Sales Manager'
+GROUP BY YEAR(OrderDate)
+ORDER BY Año; ")
+Ventas_European_Sales
+
+```
+
+
+```
+Ventas Pacific Sales Manager
+```
+
+```{r}
+
+Ventas_Pacific_Sales=dbGetQuery(sqldb,
+"SELECT YEAR(OrderDate) AS Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+AND JobTitle = 'Pacific Sales Manager'
+GROUP BY YEAR(OrderDate)
+ORDER BY Año; ")
+Ventas_Pacific_Sales
+
+```
+
+
+
+```
+TOP 5 resellers con mayores montos vendidos
+```
+
+```{r}
+Top_5_Sales=dbGetQuery(sqldb,
+"SELECT TOP 5 SalesPersonID, OrganizationLevel, JobTitle, FORMAT(SUM(TotalDue), 'C') Monto_total
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID
+WHERE SalesPersonID IS NOT NULL
+GROUP BY SalesPersonID, OrganizationLevel, JobTitle
+ORDER BY Monto_total DESC;")
+Top_5_Sales
+
+```
+
+
+```
+Cantidad ordenes por lugar
+```
+
+```{r}
+Ordenes_por_lugar=dbGetQuery(sqldb,
+"SELECT SalesPersonID, t.Name AS Zona, t.[Group] AS Lugar
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesPerson p ON h.SalesPersonID=p.BusinessEntityID 
+INNER JOIN Sales.SalesTerritory t ON p.TerritoryID=t.TerritoryID
+GROUP BY SalesPersonID, t.Name, t.[Group]
+HAVING COUNT(SalesOrderID) IN (SELECT COUNT(*) Cantidad_ordenes
+                                    FROM Sales.SalesOrderHeader h1
+                                    WHERE SalesPersonID IS NOT NULL
+                                    GROUP BY SalesPersonID
+                                    HAVING COUNT(*)>250)
+ORDER BY COUNT(SalesOrderID) DESC;")
+Ordenes_por_lugar
+
+```
+
+
+```
+De dónde son los resellers que realizaron más de 250 ventas totales
+```
+
+```
+Datos lugar y telefono de todos los resellers (vista)
+```
+
+```{r}
+Info_vendedores=dbGetQuery(sqldb,
+"SELECT *
+FROM sales.vSalesPerson;")
+Info_vendedores
+
+```
+
+```
+DATAFRAME con características de Resellers
+```
+
+```{r}
+DATAFRAME_Resellers=dbGetQuery(sqldb,
+"WITH Resellers AS
+(
+SELECT SalesPersonID, CONCAT(pp.FirstName, ' ', pp.LastName) as Reseller, t.Name as Zona, t.[Group] as Lugar, e.JobTitle, v.Department, v.GroupName, e.BirthDate, e.MaritalStatus, e.Gender, e.HireDate, v.StartDate
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID 
+INNER JOIN Person.Person pp ON e.BusinessEntityID=pp.BusinessEntityID
+INNER JOIN HumanResources.vEmployeeDepartment v ON pp.BusinessEntityID=v.BusinessEntityID
+INNER JOIN Sales.SalesPerson p ON v.BusinessEntityID =p.BusinessEntityID 
+INNER JOIN Sales.SalesTerritory t ON p.TerritoryID=t.TerritoryID
+GROUP BY SalesPersonID, CONCAT(pp.FirstName, ' ', pp.LastName), t.Name, t.[Group] , e.JobTitle, v.Department, v.GroupName, 
+e.BirthDate, e.MaritalStatus, e.Gender, e.HireDate, v.StartDate)
+
+SELECT*, DATEDIFF(D, StartDate, HireDate) as Datediff, DATEDIFF (YEAR, BirthDate, HireDate) as Edad
+FROM Resellers;")
+DATAFRAME_Resellers
+
+```
+
+
+
+```{r}
+hist(x = DATAFRAME_Resellers$Edad, main ="Distribución Edad", xlab = "Densidad", col=colors()[616])
+```
+
+
+
+
+
+```
+Segmentado por género
+```
+
+```{r}
+Segmentacion_genero=dbGetQuery(sqldb,
+"SELECT E.Gender, COUNT(*) Casos
+FROM [HumanResources].[Employee] E
+LEFT JOIN [Person].[Person] P ON E.BusinessEntityID=P.[BusinessEntityID]
+WHERE P.[PersonType]='SP'
+GROUP BY E.Gender")
+Segmentacion_genero
+
+```
+
+```{r}
+Segmentacion_genero_tp=dbGetQuery(sqldb,
+"SELECT P.PersonType, E.Gender, COUNT(*) Casos
+FROM [HumanResources].[Employee] E
+LEFT JOIN [Person].[Person] P ON E.BusinessEntityID=P.[BusinessEntityID]
+GROUP BY P.[PersonType],E.Gender
+order by PersonType")
+Segmentacion_genero_tp
+
+```
+
+```
+Segmentacion edad vendedor
+
+```
+
+```{r}
+Segmentacion_edad=dbGetQuery(sqldb,
+"SELECT DATEDIFF (YEAR, e.BirthDate,e.HireDate) as Edad, COUNT(*) conteo
+FROM [HumanResources].[Employee] e
+LEFT JOIN [Person].[Person] P ON E.BusinessEntityID=P.[BusinessEntityID] and p.[PersonType]='SL'
+GROUP BY DATEDIFF (YEAR, e.BirthDate, e.HireDate), p.[PersonType];")
+Segmentacion_edad
+```
+
+
+
+```{r}
+#install.packages("ggthemes")
+library(tidyverse) # tiene ggplot, dplyr, tidyr, y otros
+library(ggthemes)  # estilos de gráficos
+library(ggrepel)   # etiquetas de texto más prolijas que las de ggplot
+library(scales)
+
+Segmentacion_edad_detalle=dbGetQuery(sqldb,
+"SELECT  p.[PersonType], DATEDIFF (YEAR, e.BirthDate, e.HireDate) as Edad
+FROM [HumanResources].[Employee] e
+LEFT JOIN [Person].[Person] P ON E.BusinessEntityID=P.[BusinessEntityID] and p.[PersonType]='SL' 
+GROUP BY DATEDIFF (YEAR, e.BirthDate, e.HireDate), p.[PersonType];")
+#Segmentacion_edad
+Segmentacion_edad_detalle
+
+hist(x = Segmentacion_edad_detalle$Edad, main ="Distribución Edad", xlab = "Densidad", col=colors()[616])
+
+
+```
+
+
+```
+Segmentado por lugar
+```
+
+```{r}
+Segmentacion_lugar=dbGetQuery(sqldb,
+"SELECT Lugar, COUNT(*) Resellers
+FROM (SELECT SalesPersonID, CONCAT(pp.FirstName, ' ', pp.LastName) as Reseller, t.Name as Zona, t.[Group] as Lugar, e.JobTitle, v.Department, v.GroupName, e.BirthDate, e.MaritalStatus, e.Gender, e.HireDate, v.StartDate
+FROM Sales.SalesOrderHeader h INNER JOIN HumanResources.Employee e ON h.SalesPersonID=e.BusinessEntityID 
+INNER JOIN Person.Person pp ON e.BusinessEntityID=pp.BusinessEntityID
+INNER JOIN HumanResources.vEmployeeDepartment v ON pp.BusinessEntityID=v.BusinessEntityID
+INNER JOIN Sales.SalesPerson p ON v.BusinessEntityID =p.BusinessEntityID 
+INNER JOIN Sales.SalesTerritory t ON p.TerritoryID=t.TerritoryID
+GROUP BY SalesPersonID, CONCAT(pp.FirstName, ' ', pp.LastName), t.Name, t.[Group] , e.JobTitle, v.Department, v.GroupName, 
+e.BirthDate, e.MaritalStatus, e.Gender, e.HireDate, v.StartDate)
+Resellers
+GROUP BY Lugar; ")
+Segmentacion_lugar
+
+```
+
+
+```
+DATAFRAME con características de consumos de productos
+```
+
+
+```{r}
+
+DATAFRAME_productos=dbGetQuery(sqldb,
+"SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+--WHERE OnlineOrderFlag=1 para filtrar por tipo_compra
+ORDER BY CustomerID;")
+DATAFRAME_productos
+
+
+```
+
+
+```
+No hay compras onlines y físicas por el mismo cliente:
+```
+
+```{r}
+compras_clientes=dbGetQuery(sqldb,
+"WITH compras_clientes AS
+(
+SELECT CustomerID, COUNT(OnlineOrderFlag) cantidad_compras, SUM(TotalDue) monto_compras, 'física' as tipo_compra
+FROM Sales.SalesOrderHeader
+WHERE OnlineOrderFlag = 0
+GROUP BY CustomerID
+UNION
+SELECT CustomerID, COUNT(OnlineOrderFlag) cantidad_compras, SUM(TotalDue) monto_compras, 'online' as tipo_compra
+FROM Sales.SalesOrderHeader
+WHERE OnlineOrderFlag = 1
+GROUP BY CustomerID
+--ORDER BY 1
+)
+ 
+SELECT *, DENSE_RANK() OVER (ORDER BY CustomerID) control_cliente_duplicado
+FROM compras_clientes;")
+compras_clientes
+
+```
+
+ 
+```
+EDA productos
+```
+
+
+```{r}
+compras_productos=dbGetQuery(sqldb,
+"WITH Productos AS
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+WHERE OnlineOrderFlag=0)
+
+SELECT MAX(UnitPrice) producto_mas_caro, MIN(UnitPrice) producto_menos_caro, AVG(UnitPrice) media_precio,
+MAX(Productos_x_anio) maxima_cantidad_x_anio, MAX(Gastos_x_anio) maximo_gasto_x_año, MAX(Total_productos) maxima_cantidad_total, 
+MAX(Total_gastos) gasto_maximo_total, MIN(Total_gastos) gasto_minimo_total
+FROM Productos;")
+
+compras_productos
+
+```
+
+```
+Producto más caro comprado y frecuencia
+```
+
+```{r}
+compras_productos=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+WHERE OnlineOrderFlag=1 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT ProductID, Producto, Subcategoria, Categoria, UnitPrice, COUNT(ProductID) Frecuencia
+FROM Productos 
+WHERE UnitPrice = (SELECT MAX(p.UnitPrice)
+                    FROM Productos p)
+GROUP BY ProductID, Producto, Subcategoria, Categoria, UnitPrice
+HAVING COUNT(ProductID) >= ALL (SELECT COUNT(pr.ProductID)
+                                FROM Productos pr
+                                WHERE pr.UnitPrice = (SELECT MAX(pr1.UnitPrice)
+                                                        FROM Productos pr1)
+                                GROUP BY pr.ProductID);")
+compras_productos
+
+```
+
+ 
+```
+Producto menos caro y frecuencia
+```
+
+```{r}
+compra_producto_barato=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+WHERE OnlineOrderFlag=0 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT ProductID, Producto, Subcategoria, Categoria, UnitPrice, COUNT(ProductID) Frecuencia
+FROM Productos
+WHERE UnitPrice = (SELECT MIN(p.UnitPrice)
+                    FROM Productos p)
+GROUP BY ProductID, Producto, Subcategoria, Categoria, UnitPrice;")
+compra_producto_barato
+
+```
+
+
+
+```
+Productos más frecuentes 
+```
+
+```{r}
+productos_frecuentes=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+--WHERE OnlineOrderFlag=0 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT ProductID, Producto, Subcategoria, Categoria, UnitPrice, COUNT(ProductID) Frecuencia, OnlineOrderFlag
+FROM Productos 
+GROUP BY ProductID, Producto, Subcategoria, Categoria, UnitPrice, OnlineOrderFlag
+ORDER BY Frecuencia DESC;")
+productos_frecuentes
+
+```
+
+
+```
+productos_menos_frecuentes
+```
+
+
+```{r}
+Productos_menos_frecuentes =dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+WHERE OnlineOrderFlag=0 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT ProductID, Producto, Subcategoria, Categoria, UnitPrice, COUNT(ProductID) Frecuencia
+FROM Productos 
+GROUP BY ProductID, Producto, Subcategoria, Categoria, UnitPrice
+ORDER BY Frecuencia;")
+Productos_menos_frecuentes
+
+```
+
+
+```
+Cliente que más compró
+```
+
+```{r}
+Cliente_mayor_compra=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+--WHERE OnlineOrderFlag=1 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT DISTINCT CustomerID, t.[Group] AS Lugar, OnlineOrderFlag, SalesPersonID, d.JobTitle
+FROM HumanResources.vEmployeeDepartment d INNER JOIN Productos p ON d.BusinessEntityID=p.SalesPersonID
+INNER JOIN Sales.SalesTerritory t ON p.TerritoryID=t.TerritoryID
+WHERE Total_productos = (SELECT MAX(p1.Total_productos)
+                            FROM Productos p1);")
+
+Cliente_mayor_compra
+```
+
+
+```
+Cliente que más compró
+```
+
+
+```{r}
+Cliente_max_compra=dbGetQuery(sqldb,
+"SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID")
+Cliente_max_compra
+
+##WHERE CustomerID=29722 AND SalesPersonID=274;
+
+```
+
+```
+Cliente que más gastó
+```
+
+```{r}
+Cliente_mas_gasto=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+--WHERE OnlineOrderFlag=1 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT DISTINCT CustomerID, t.[Group] AS Lugar, OnlineOrderFlag, SalesPersonID, d.JobTitle
+FROM HumanResources.vEmployeeDepartment d INNER JOIN Productos p ON d.BusinessEntityID=p.SalesPersonID
+INNER JOIN Sales.SalesTerritory t ON p.TerritoryID=t.TerritoryID
+WHERE Total_gastos = (SELECT MAX(p1.Total_gastos)
+                            FROM Productos p1);")
+Cliente_mas_gasto
+
+```
+
+
+
+```{r}
+Cliente_con_mas_gasto=dbGetQuery(sqldb,
+"SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+WHERE CustomerID=29818 AND SalesPersonID=274;")
+Cliente_con_mas_gasto
+
+```
+
+
+```
+Consumos de categorías más frecuentes por tipo de compra
+```
+
+```{r}
+Cliente_categorias_frecuentes=dbGetQuery(sqldb,
+"WITH Productos AS
+
+(
+SELECT CustomerID, OnlineOrderFlag, SalesPersonID, TerritoryID, YEAR(OrderDate) AS Anio, MONTH(OrderDate) AS Mes, d.ProductID, p.Name AS Producto,
+c.Name AS Categoria, ps.Name AS Subcategoria, UnitPrice, COUNT(d.ProductID) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Productos_x_anio,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID, YEAR(OrderDate) ) Gastos_x_anio,
+COUNT(d.ProductID) OVER (PARTITION BY CustomerID) Total_productos,
+SUM(d.LineTotal) OVER (PARTITION BY CustomerID) Total_gastos
+FROM Sales.SalesOrderHeader h INNER JOIN Sales.SalesOrderDetail d ON h.SalesOrderID=d.SalesOrderID
+INNER JOIN Production.Product p ON d.ProductID=p.ProductID 
+INNER JOIN Production.ProductSubcategory ps ON p.ProductSubcategoryID=ps.ProductSubcategoryID
+INNER JOIN Production.ProductCategory c ON ps.ProductCategoryID=c.ProductCategoryID
+--WHERE OnlineOrderFlag=1 -- para filtrar por tipo_compra
+--ORDER BY CustomerID;
+)
+
+SELECT Categoria, OnlineOrderFlag, COUNT(*) Consumos
+FROM Productos
+GROUP BY Categoria, OnlineOrderFlag
+ORDER BY Categoria, OnlineOrderFlag;")
+Cliente_categorias_frecuentes
+
+```
+
+
+
+
+
+
+```
+Ordenes por año
+```
+
+
+```{r}
+Ordenes_compra =dbGetQuery(sqldb, 
+"SELECT YEAR(OrderDate) Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader
+GROUP BY YEAR(OrderDate)
+ORDER BY Año;")
+Ordenes_compra
+
+```
+
+
+
+
+
+```{r}
+Ordenes_compra=dbGetQuery(sqldb, 
+"with tabla as (
+select [SalesOrderID] , [TotalDue],
+case
+when month([OrderDate])<10 then cast(concat(cast(year([OrderDate]) as varchar),'0', cast(month([OrderDate]) as varchar)) as int)
+else cast(concat(cast(year([OrderDate]) as varchar), cast(month([OrderDate]) as varchar)) as int) 
+end periodo_orden_compra
+from [Sales].[SalesOrderHeader]
+) 
+Select periodo_orden_compra, count([SalesOrderID]) as q_ordenes , sum([TotalDue]) as total_facturas
+from tabla group by periodo_orden_compra
+order by periodo_orden_compra asc ;")
+Ordenes_compra
+
+```
+
+
+
+```{r}
+año <- c(201105:201406)
+set.seed(1234)
+Total_venta <- Ordenes_compra$total_facturas
+datos <- data.frame(cbind(año, Total_venta))
+
+library(ggplot2)
+ggplot(datos, aes(x=año, y=Total_venta )) + 
+  geom_line(colour="red")  + 
+  geom_point( size=1, shape=21, fill="white", colour="red") + 
+  theme_minimal()
+
+```
+
+
+```{r}
+library(astsa)
+library(TSA)
+library(tseries)
+
+adf.test(Ordenes_compra$total_facturas, k=0)
+```
+
+
+
+```{r}
+library(forecast)
+fit_general <- auto.arima(Ordenes_compra$total_facturas)
+summary(fit_general)
+plot(forecast(fit_general,h=6))
+```
+
+
+
+
+```
+Compras fisicas por año
+```
+
+
+```{r}
+Ordenes_compra_fisica1=dbGetQuery(sqldb, 
+"SELECT YEAR(OrderDate) Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NOT NULL
+GROUP BY YEAR(OrderDate)
+ORDER BY Año;")
+Ordenes_compra_fisica1
+
+```
+
+
+
+```{r}
+Ordenes_compra_fisica <- dbGetQuery(sqldb,
+"with tabla as (
+select [SalesOrderID] , [TotalDue],[OnlineOrderFlag],
+case
+when month([OrderDate])<10 then cast(concat(cast(year([OrderDate]) as varchar),'0', cast(month([OrderDate]) as varchar)) as int)
+else cast(concat(cast(year([OrderDate]) as varchar), cast(month([OrderDate]) as varchar)) as int) 
+end periodo_orden_compra
+from [Sales].[SalesOrderHeader]
+) 
+Select periodo_orden_compra, count([SalesOrderID]) as q_ordenes , sum([TotalDue]) as total_facturas_compra_fisica
+from tabla where OnlineOrderFlag = 0 
+group by periodo_orden_compra
+order by periodo_orden_compra asc ;")
+Ordenes_compra_fisica
+
+```
+
+
+```{r}
+año <- c(201105:201406)
+set.seed(1234)
+Ventas_fisicas <- Ordenes_compra_fisica$total_facturas_compra_fisica
+datos <- data.frame(cbind(año, Ventas_fisicas))
+
+library(ggplot2)
+ggplot(datos, aes(x=año, y=Ventas_fisicas )) + 
+  geom_line(colour="blue")  + 
+  geom_point( size=1, shape=21, fill="white", colour="blue") + 
+  theme_minimal()
+
+```
+
+```{r}
+
+adf.test(Ordenes_compra_fisica$total_facturas_compra_fisica, k=0)
+
+```
+
+
+```
+Pronostico compras fisicas
+
+```
+
+
+```{r}
+library(forecast)
+fit_fisica <- auto.arima(Ordenes_compra_fisica$total_facturas_compra_fisica)
+summary(fit_fisica)
+plot(forecast(fit_fisica,h=6))
+
+```
+
+
+```
+Compras online por año
+```
+
+
+```{r}
+Ordenes_compra_fisica1=dbGetQuery(sqldb, 
+"SELECT YEAR(OrderDate) Año, COUNT(*) Cantidad_ordenes
+FROM Sales.SalesOrderHeader
+WHERE SalesPersonID IS NULL
+GROUP BY YEAR(OrderDate)
+ORDER BY Año;")
+Ordenes_compra_fisica1
+
+```
+
+
+
+
+
+
+```{r}
+Ordenes_compra_online=dbGetQuery(sqldb, 
+"with tabla as (
+select [SalesOrderID] , [TotalDue],[OnlineOrderFlag],
+case
+when month([OrderDate])<10 then cast(concat(cast(year([OrderDate]) as varchar),'0', cast(month([OrderDate]) as varchar)) as int)
+else cast(concat(cast(year([OrderDate]) as varchar), cast(month([OrderDate]) as varchar)) as int) 
+end periodo_orden_compra
+from [Sales].[SalesOrderHeader]
+) 
+Select periodo_orden_compra, count([SalesOrderID]) as q_ordenes , sum([TotalDue]) as total_facturas_compras_online
+from tabla where OnlineOrderFlag = 1 
+group by periodo_orden_compra
+order by periodo_orden_compra asc");
+Ordenes_compra_online
+
+```
+
+
+```{r}
+año <- c(201105:201406)
+set.seed(1234)
+Ventas_online <- Ordenes_compra_online$total_facturas_compras_online
+datos <- data.frame(cbind(año, Ventas_online))
+
+library(ggplot2)
+ggplot(datos, aes(x=año, y=Ventas_online)) + 
+  geom_line(colour="blue")  + 
+  geom_point( size=1, shape=21, fill="white", colour="blue") + 
+  theme_minimal()
+
+```
+
+
+```{r}
+adf.test(diff(Ordenes_compra_online$total_facturas_compras_online), k=0)
+
+```
+
+
+```
+Pronostico compras online
+```
+
+
+```{r}
+fit_online <- auto.arima(Ordenes_compra_online$total_facturas_compras_online)
+summary(fit_online)
+plot(forecast(fit_online,h=6))
+
+```
+
+
+
+
+
